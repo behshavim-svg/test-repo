@@ -1,0 +1,57 @@
+name: Telegram Channel Scraper
+
+on:
+  schedule:
+    - cron: '*/15 * * * *' # اجرا هر ۳۰ دقیقه
+  workflow_dispatch: # امکان اجرای دستی از پنل گیت‌هاب
+
+jobs:
+  scrape-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Scraper
+        env:
+          CHANNEL_USERNAME: ${{ vars.CHANNEL_USERNAME }}
+          LAST_MESSAGE_ID: ${{ vars.LAST_MESSAGE_ID }}
+        run: python scraper.py
+
+      - name: Commit and Push Changes
+        id: commit_step
+        run: |
+          # اگر فایل lock.txt ساخته نشده باشد، یعنی پیام جدیدی نبوده و اسکریپت متوقف شده است
+          if [ -f "lock.txt" ]; then
+            git config --global user.name "Scraper Bot"
+            git config --global user.email "bot@github-actions.local"
+            git add data/ media/ lock.txt
+            git commit -m "Auto-scrape: New messages added"
+            
+            # استفاده از PAT برای دور زدن محدودیت‌های تریگر شدن سایر اکشن‌ها
+            git push https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/${{ github.repository }}.git HEAD:main
+            
+            echo "pushed=true" >> $GITHUB_OUTPUT
+          else
+            echo "No lock file generated. Skipping commit."
+            echo "pushed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update Repository Variable (LAST_MESSAGE_ID)
+        if: steps.commit_step.outputs.pushed == 'true'
+        run: |
+          NEW_ID=$(cat new_id.txt)
+          curl -L -X PATCH \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.PAT_TOKEN }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/${{ github.repository }}/actions/variables/LAST_MESSAGE_ID \
+            -d "{\"name\":\"LAST_MESSAGE_ID\",\"value\":\"$NEW_ID\"}"
