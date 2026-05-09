@@ -19,7 +19,7 @@ jobs:
       - name: Checkout Buffer Repo (Private)
         uses: actions/checkout@v4
         with:
-          repository: 'YOUR_GITHUB_USERNAME/YOUR_PRIVATE_REPO_NAME' # نام ریپوی دوم خود را اینجا بنویسید
+          repository: 'behshavim-svg/test2' # نام ریپوی دوم خود را اینجا بنویسید
           token: ${{ secrets.PAT_TOKEN }}
           path: 'buffer'
 
@@ -48,7 +48,7 @@ jobs:
             
             git add .
             git commit -m "Auto-scrape: New messages added"
-            git push https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/YOUR_GITHUB_USERNAME/YOUR_PRIVATE_REPO_NAME.git HEAD:main
+            git push https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/behshavim-svg/test2.git HEAD:main
             
             echo "pushed=true" >> $GITHUB_OUTPUT
           else
