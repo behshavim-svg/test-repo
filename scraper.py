@@ -19,7 +19,7 @@ except json.JSONDecodeError:
     print("Invalid JSON format in CHANNELS_STATE variable.")
     sys.exit(1)
 
-# Create necessary directories
+# Create necessary directories for storage
 os.makedirs("data", exist_ok=True)
 os.makedirs("media", exist_ok=True)
 
@@ -36,10 +36,13 @@ def download_and_hash(url):
             media_data.extend(chunk)
             
         file_hash = sha256.hexdigest()
+        
+        # Simple extension detection
         ext = ".jpg" if ".jpg" in url else ".mp4" if ".mp4" in url else ".file"
         file_name = f"{file_hash}{ext}"
         file_path = os.path.join("media", file_name)
         
+        # Save file only if it does not already exist
         if not os.path.exists(file_path):
             with open(file_path, "wb") as f:
                 f.write(media_data)
@@ -49,70 +52,114 @@ def download_and_hash(url):
         print(f"Failed to download {url}: {e}")
         return None
 
+def extract_message_data(msg, msg_id):
+    """Extract text, HTML, and media from a single message DOM element"""
+    # Extract text content
+    text_div = msg.find("div", class_="tgme_widget_message_text")
+    msg_text = text_div.get_text(separator="\n") if text_div else ""
+    msg_html = str(text_div) if text_div else ""
+
+    # Extract media (e.g., photos)
+    media_info = None
+    photo_wrap = msg.find("a", class_="tgme_widget_message_photo_wrap")
+    if photo_wrap:
+        style = photo_wrap.get("style", "")
+        start = style.find("url('") + 5
+        end = style.find("')", start)
+        if start > 4 and end > -1:
+            img_url = style[start:end]
+            media_info = download_and_hash(img_url)
+
+    return {
+        "message_id": msg_id,
+        "content": {"text": msg_text, "html": msg_html},
+        "media": media_info
+    }
+
 total_new_messages_scraped = 0
 run_timestamp = int(time.time())
 
 # 2. Iterate over all channels defined in the state
 for channel, last_id in channels_state.items():
-    base_url = f"https://t.me/s/{channel}"
     print(f"\n--- Scraping {channel} after ID: {last_id} ---")
     
-    try:
-        html = requests.get(base_url, timeout=10).text
-    except Exception as e:
-        print(f"Failed to fetch {channel}: {e}")
-        continue
-        
-    soup = BeautifulSoup(html, "html.parser")
-    messages_html = soup.find_all("div", class_="tgme_widget_message")
-
-    parsed_messages = []
+    current_url = f"https://t.me/s/{channel}"
+    channel_messages = []
     highest_id = last_id
+    page_count = 0
+    max_pages = 30 # Safety limit to prevent infinite loops (approx 600 messages)
 
-    for msg in messages_html:
-        post_param = msg.get("data-post", "")
-        if not post_param:
-            continue
+    # 3. Pagination loop
+    while current_url and page_count < max_pages:
+        try:
+            html = requests.get(current_url, timeout=15).text
+            page_count += 1
+        except Exception as e:
+            print(f"Failed to fetch {current_url}: {e}")
+            break
             
-        msg_id = int(post_param.split("/")[-1])
-        if msg_id <= last_id:
-            continue
-
-        # Extract text content
-        text_div = msg.find("div", class_="tgme_widget_message_text")
-        msg_text = text_div.get_text(separator="\n") if text_div else ""
-        msg_html = str(text_div) if text_div else ""
-
-        # Extract media (e.g., photos)
-        media_info = None
-        photo_wrap = msg.find("a", class_="tgme_widget_message_photo_wrap")
-        if photo_wrap:
-            style = photo_wrap.get("style", "")
-            start = style.find("url('") + 5
-            end = style.find("')", start)
-            if start > 4 and end > -1:
-                img_url = style[start:end]
-                media_info = download_and_hash(img_url)
-
-        parsed_messages.append({
-            "message_id": msg_id,
-            "content": {"text": msg_text, "html": msg_html},
-            "media": media_info
-        })
+        soup = BeautifulSoup(html, "html.parser")
+        messages_html = soup.find_all("div", class_="tgme_widget_message")
         
-        if msg_id > highest_id:
-            highest_id = msg_id
+        if not messages_html:
+            break
 
-    # 3. Save data if new messages exist for this specific channel
-    if parsed_messages:
+        smallest_id_on_page = float('inf')
+        page_parsed_messages = []
+
+        for msg in messages_html:
+            post_param = msg.get("data-post", "")
+            if not post_param:
+                continue
+                
+            msg_id = int(post_param.split("/")[-1])
+            
+            # Track the smallest ID to know if we need to load older pages
+            if msg_id < smallest_id_on_page:
+                smallest_id_on_page = msg_id
+                
+            # Skip messages that have already been read
+            if msg_id <= last_id:
+                continue
+
+            parsed_msg = extract_message_data(msg, msg_id)
+            page_parsed_messages.append(parsed_msg)
+            
+            # Track the highest ID processed overall
+            if msg_id > highest_id:
+                highest_id = msg_id
+
+        channel_messages.extend(page_parsed_messages)
+
+        # Boundary Condition: Cold Start
+        if last_id == 0:
+            print(f"Cold start detected for {channel}. Processed first page only.")
+            break # Do not paginate further for cold starts
+
+        # If the smallest ID on the current page is still greater than our last known ID,
+        # it means there are older messages between this page and our last_id.
+        # We use the '?before=' parameter to fetch the previous page.
+        if smallest_id_on_page > last_id:
+            current_url = f"https://t.me/s/{channel}?before={smallest_id_on_page}"
+            print(f"Gap detected. Loading older messages before ID: {smallest_id_on_page}...")
+            time.sleep(1) # Delay to be polite to Telegram servers and avoid rate limit
+        else:
+            # We have reached messages equal to or older than last_id. Stop pagination.
+            break
+
+    # 4. Save data if new messages exist for this specific channel
+    if channel_messages:
+        # Sort messages chronologically (oldest to newest) since backward pagination messes up the order
+        channel_messages.sort(key=lambda x: x["message_id"])
+        
         json_filename = f"data/{run_timestamp}_{channel}.json"
         output_data = {
             "scrape_metadata": {
                 "channel_username": channel,
                 "scrape_timestamp": run_timestamp,
-                "messages_count": len(parsed_messages)
+                "messages_count": len(channel_messages)
             },
-            "messages": parsed_messages
+            "messages": channel_messages
         }
 
         with open(json_filename, "w", encoding="utf-8") as f:
@@ -120,18 +167,18 @@ for channel, last_id in channels_state.items():
             
         # Update the state dictionary with the new highest ID
         channels_state[channel] = highest_id
-        total_new_messages_scraped += len(parsed_messages)
-        print(f"Saved {len(parsed_messages)} messages for {channel}. Max ID: {highest_id}")
+        total_new_messages_scraped += len(channel_messages)
+        print(f"Saved {len(channel_messages)} messages for {channel}. Max ID updated to: {highest_id}")
     else:
         print(f"No new messages for {channel}.")
 
-# 4. Finalize process if any data was collected across all channels
+# 5. Finalize process if any data was collected across all channels
 if total_new_messages_scraped > 0:
     # Create the synchronization lock file
     with open("lock.txt", "w") as f:
         f.write("LOCKED")
 
-    # Save the updated state to a file so GitHub Actions can read it
+    # Save the updated state to a file so GitHub Actions can read and push it
     with open("new_state.json", "w", encoding="utf-8") as f:
         json.dump(channels_state, f, ensure_ascii=False)
         
