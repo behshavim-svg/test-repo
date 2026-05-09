@@ -85,6 +85,6 @@ jobs:
             --method PATCH \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            /repos/YOUR_USERNAME/YOUR_PRIVATE_REPO/actions/variables/CHANNELS_STATE \
+            /repos/behshavim-svg/test2/actions/variables/CHANNELS_STATE \
             -f name='CHANNELS_STATE' \
             -f value="$(cat engine/new_state.json)"
