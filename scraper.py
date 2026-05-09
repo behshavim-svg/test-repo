@@ -6,12 +6,17 @@ import hashlib
 import requests
 from bs4 import BeautifulSoup
 
-# 1. Check lock state to avoid race conditions
-if os.path.exists("lock.txt"):
-    print("Lock file exists. Consumer has not processed the data yet. Exiting.")
+# Define the path to the secondary (private) repository
+# The GitHub Action workflow will clone the private data repo into this folder
+BUFFER_DIR = "../buffer"
+
+# 1. Check lock state in the buffer to avoid race conditions
+lock_file_path = os.path.join(BUFFER_DIR, "lock.txt")
+if os.path.exists(lock_file_path):
+    print("Lock file exists in the buffer. Consumer has not processed the data yet. Exiting.")
     sys.exit(0)
 
-# Load the JSON string from GitHub Variables
+# Load the JSON string from GitHub Variables (passed via environment)
 channels_state_raw = os.getenv("CHANNELS_STATE", "{}")
 try:
     channels_state = json.loads(channels_state_raw)
@@ -19,12 +24,12 @@ except json.JSONDecodeError:
     print("Invalid JSON format in CHANNELS_STATE variable.")
     sys.exit(1)
 
-# Create necessary directories for storage
-os.makedirs("data", exist_ok=True)
-os.makedirs("media", exist_ok=True)
+# Create necessary directories for storage inside the buffer repository
+os.makedirs(os.path.join(BUFFER_DIR, "data"), exist_ok=True)
+os.makedirs(os.path.join(BUFFER_DIR, "media"), exist_ok=True)
 
 def download_and_hash(url):
-    """Download media file and save it with a SHA-256 hash name"""
+    """Download media file and save it to the buffer with a SHA-256 hash name"""
     try:
         response = requests.get(url, stream=True, timeout=15)
         response.raise_for_status()
@@ -40,13 +45,14 @@ def download_and_hash(url):
         # Simple extension detection
         ext = ".jpg" if ".jpg" in url else ".mp4" if ".mp4" in url else ".file"
         file_name = f"{file_hash}{ext}"
-        file_path = os.path.join("media", file_name)
+        file_path = os.path.join(BUFFER_DIR, "media", file_name)
         
         # Save file only if it does not already exist
         if not os.path.exists(file_path):
             with open(file_path, "wb") as f:
                 f.write(media_data)
                 
+        # Return relative path based on the root of the buffer repo
         return {"file_hash_sha256": file_hash, "relative_path": f"media/{file_name}"}
     except Exception as e:
         print(f"Failed to download {url}: {e}")
@@ -87,9 +93,9 @@ for channel, last_id in channels_state.items():
     channel_messages = []
     highest_id = last_id
     page_count = 0
-    max_pages = 30 # Safety limit to prevent infinite loops (approx 600 messages)
+    max_pages = 30 # Safety limit to prevent infinite loops (approx 600 messages max)
 
-    # 3. Pagination loop
+    # 3. Pagination loop for handling high volume of new messages
     while current_url and page_count < max_pages:
         try:
             html = requests.get(current_url, timeout=15).text
@@ -134,25 +140,23 @@ for channel, last_id in channels_state.items():
         # Boundary Condition: Cold Start
         if last_id == 0:
             print(f"Cold start detected for {channel}. Processed first page only.")
-            break # Do not paginate further for cold starts
+            break # Stop pagination immediately
 
-        # If the smallest ID on the current page is still greater than our last known ID,
-        # it means there are older messages between this page and our last_id.
-        # We use the '?before=' parameter to fetch the previous page.
+        # Gap Detection: Check if there are unread messages older than this page
         if smallest_id_on_page > last_id:
             current_url = f"https://t.me/s/{channel}?before={smallest_id_on_page}"
             print(f"Gap detected. Loading older messages before ID: {smallest_id_on_page}...")
-            time.sleep(1) # Delay to be polite to Telegram servers and avoid rate limit
+            time.sleep(1) # Be polite to Telegram servers to avoid rate limiting
         else:
-            # We have reached messages equal to or older than last_id. Stop pagination.
+            # We have successfully reached messages we've seen before
             break
 
-    # 4. Save data if new messages exist for this specific channel
+    # 4. Save data to the buffer if new messages exist for this channel
     if channel_messages:
-        # Sort messages chronologically (oldest to newest) since backward pagination messes up the order
+        # Sort messages chronologically (oldest to newest)
         channel_messages.sort(key=lambda x: x["message_id"])
         
-        json_filename = f"data/{run_timestamp}_{channel}.json"
+        json_filename = os.path.join(BUFFER_DIR, "data", f"{run_timestamp}_{channel}.json")
         output_data = {
             "scrape_metadata": {
                 "channel_username": channel,
@@ -168,17 +172,18 @@ for channel, last_id in channels_state.items():
         # Update the state dictionary with the new highest ID
         channels_state[channel] = highest_id
         total_new_messages_scraped += len(channel_messages)
-        print(f"Saved {len(channel_messages)} messages for {channel}. Max ID updated to: {highest_id}")
+        print(f"Saved {len(channel_messages)} messages for {channel} in buffer. Max ID: {highest_id}")
     else:
         print(f"No new messages for {channel}.")
 
 # 5. Finalize process if any data was collected across all channels
 if total_new_messages_scraped > 0:
-    # Create the synchronization lock file
-    with open("lock.txt", "w") as f:
+    # Create the synchronization lock file inside the buffer repository
+    with open(lock_file_path, "w") as f:
         f.write("LOCKED")
 
-    # Save the updated state to a file so GitHub Actions can read and push it
+    # Save the updated state to a file in the ENGINE repository (current dir)
+    # so GitHub Actions can read it and update the repository variable
     with open("new_state.json", "w", encoding="utf-8") as f:
         json.dump(channels_state, f, ensure_ascii=False)
         
