@@ -38,9 +38,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
-          # 👇 CHANGE THIS 👇
           STATE=$(gh api /repos/behshavim-svg/test2/actions/variables/CHANNELS_STATE --jq '.value')
-          echo "state=$STATE" >> $GITHUB_OUTPUT
+          
+          # استفاده از فرمت چندخطی استاندارد گیت‌هاب اکشن
+          echo "state<<EOF" >> $GITHUB_OUTPUT
+          echo "$STATE" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
       # 4. Run the Python Scraper
       - name: Run Scraper
