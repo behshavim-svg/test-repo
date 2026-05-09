@@ -2,24 +2,25 @@ name: Telegram Multi-Channel Scraper
 
 on:
   schedule:
-    - cron: '*/15 * * * *' # حالا که محدودیت زمانی نداریم (چون ریپو پابلیک است)، می‌توانیم هر 15 دقیقه اجرایش کنیم
+    - cron: '*/15 * * * *'
   workflow_dispatch:
 
 jobs:
   scrape-and-push:
     runs-on: ubuntu-latest
     steps:
-      # 1. دانلود ریپوی اصلی (کدها) در پوشه engine
+      # 1. Checkout the public engine repository
       - name: Checkout Engine Repo
         uses: actions/checkout@v4
         with:
           path: 'engine'
 
-      # 2. دانلود ریپوی دوم (دیتا) در پوشه buffer با استفاده از توکن PAT
+      # 2. Checkout the private buffer repository
       - name: Checkout Buffer Repo (Private)
         uses: actions/checkout@v4
         with:
-          repository: 'behshavim-svg/test2' # نام ریپوی دوم خود را اینجا بنویسید
+          # 👇 CHANGE THIS 👇
+          repository: 'behshavim-svg/test2'
           token: ${{ secrets.PAT_TOKEN }}
           path: 'buffer'
 
@@ -31,24 +32,37 @@ jobs:
       - name: Install Dependencies
         run: pip install -r engine/requirements.txt
 
-      # 3. اجرای اسکریپت
-      - name: Run Scraper
+      # 3. Securely fetch the CHANNELS_STATE from the Private Repository
+      - name: Fetch State from Private Repo
+        id: fetch_state
         env:
-          CHANNELS_STATE: ${{ vars.CHANNELS_STATE }}
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          # 👇 CHANGE THIS 👇
+          STATE=$(gh api /repos/behshavim-svg/test2/actions/variables/CHANNELS_STATE --jq '.value')
+          echo "state=$STATE" >> $GITHUB_OUTPUT
+
+      # 4. Run the Python Scraper
+      - name: Run Scraper
         working-directory: ./engine
+        env:
+          # Pass the securely fetched state to Python
+          CHANNELS_STATE: ${{ steps.fetch_state.outputs.state }}
         run: python scraper.py
 
-      # 4. کامیت و پوش فقط در ریپوی Buffer
+      # 5. Commit and Push data to the Private Buffer Repository
       - name: Commit and Push to Buffer Repo
         id: commit_step
         run: |
-          cd buffer # وارد پوشه دیتای خصوصی می‌شویم
+          cd buffer
           if [ -f "lock.txt" ]; then
             git config --global user.name "Scraper Bot"
             git config --global user.email "bot@github-actions.local"
             
             git add .
             git commit -m "Auto-scrape: New messages added"
+            
+            # 👇 CHANGE THIS 👇
             git push https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/behshavim-svg/test2.git HEAD:main
             
             echo "pushed=true" >> $GITHUB_OUTPUT
@@ -57,16 +71,17 @@ jobs:
             echo "pushed=false" >> $GITHUB_OUTPUT
           fi
 
-      # 5. آپدیت کردن متغیر وضعیت در ریپوی اول (Engine)
-      - name: Update CHANNELS_STATE Variable
+      # 6. Update the CHANNELS_STATE variable in the Private Repository
+      - name: Update CHANNELS_STATE Variable in Private Repo
         if: steps.commit_step.outputs.pushed == 'true'
         env:
           GH_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
+          # 👇 CHANGE THIS 👇
           gh api \
             --method PATCH \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            /repos/${{ github.repository }}/actions/variables/CHANNELS_STATE \
+            /repos/YOUR_USERNAME/YOUR_PRIVATE_REPO/actions/variables/CHANNELS_STATE \
             -f name='CHANNELS_STATE' \
             -f value="$(cat engine/new_state.json)"
