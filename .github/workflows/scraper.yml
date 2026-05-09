@@ -1,9 +1,9 @@
-name: Telegram Channel Scraper
+name: Telegram Multi-Channel Scraper
 
 on:
   schedule:
-    - cron: '*/15 * * * *' # اجرا هر ۳۰ دقیقه
-  workflow_dispatch: # امکان اجرای دستی از پنل گیت‌هاب
+    - cron: '*/15 * * * *' # Run every 15 minutes
+  workflow_dispatch: # Allow manual trigger
 
 jobs:
   scrape-and-push:
@@ -22,21 +22,21 @@ jobs:
 
       - name: Run Scraper
         env:
-          CHANNEL_USERNAME: ${{ vars.CHANNEL_USERNAME }}
-          LAST_MESSAGE_ID: ${{ vars.LAST_MESSAGE_ID }}
+          # Pass the JSON string to the Python script
+          CHANNELS_STATE: ${{ vars.CHANNELS_STATE }}
         run: python scraper.py
 
       - name: Commit and Push Changes
         id: commit_step
         run: |
-          # اگر فایل lock.txt ساخته نشده باشد، یعنی پیام جدیدی نبوده و اسکریپت متوقف شده است
+          # If lock.txt is generated, it means new data was found
           if [ -f "lock.txt" ]; then
             git config --global user.name "Scraper Bot"
             git config --global user.email "bot@github-actions.local"
             git add data/ media/ lock.txt
             git commit -m "Auto-scrape: New messages added"
             
-            # استفاده از PAT برای دور زدن محدودیت‌های تریگر شدن سایر اکشن‌ها
+            # Push using PAT to ensure workflow permissions
             git push https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/${{ github.repository }}.git HEAD:main
             
             echo "pushed=true" >> $GITHUB_OUTPUT
@@ -45,13 +45,17 @@ jobs:
             echo "pushed=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Update Repository Variable (LAST_MESSAGE_ID)
+      - name: Update CHANNELS_STATE Variable
         if: steps.commit_step.outputs.pushed == 'true'
+        env:
+          # GitHub CLI requires a token to authenticate API requests
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
-          NEW_ID=$(cat new_id.txt)
-          curl -L -X PATCH \
+          # Use GitHub CLI to securely PATCH the JSON variable
+          gh api \
+            --method PATCH \
             -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ secrets.PAT_TOKEN }}" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            https://api.github.com/repos/${{ github.repository }}/actions/variables/LAST_MESSAGE_ID \
-            -d "{\"name\":\"LAST_MESSAGE_ID\",\"value\":\"$NEW_ID\"}"
+            /repos/${{ github.repository }}/actions/variables/CHANNELS_STATE \
+            -f name='CHANNELS_STATE' \
+            -f value="$(cat new_state.json)"
