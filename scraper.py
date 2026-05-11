@@ -29,9 +29,10 @@ os.makedirs(os.path.join(BUFFER_DIR, "data"), exist_ok=True)
 os.makedirs(os.path.join(BUFFER_DIR, "media"), exist_ok=True)
 
 def download_and_hash(url):
-    """Download media file and save it to the buffer with a SHA-256 hash name"""
+    """Download media file (image or video) and save it to the buffer with a SHA-256 hash name"""
     try:
-        response = requests.get(url, stream=True, timeout=15)
+        # Added a longer timeout to accommodate larger video files
+        response = requests.get(url, stream=True, timeout=30)
         response.raise_for_status()
         
         sha256 = hashlib.sha256()
@@ -42,7 +43,7 @@ def download_and_hash(url):
             
         file_hash = sha256.hexdigest()
         
-        # Simple extension detection
+        # Simple extension detection supporting mp4 for videos
         ext = ".jpg" if ".jpg" in url else ".mp4" if ".mp4" in url else ".file"
         file_name = f"{file_hash}{ext}"
         file_path = os.path.join(BUFFER_DIR, "media", file_name)
@@ -59,14 +60,25 @@ def download_and_hash(url):
         return None
 
 def extract_message_data(msg, msg_id):
-    """Extract text, HTML, and media from a single message DOM element"""
-    # Extract text content
+    """Extract text, HTML, and media (images AND videos) from a single message DOM element"""
+    
+    # --- FIX 1: Extract text without breaking emojis ---
     text_div = msg.find("div", class_="tgme_widget_message_text")
-    msg_text = text_div.get_text(separator="\n") if text_div else ""
-    msg_html = str(text_div) if text_div else ""
+    msg_text = ""
+    msg_html = ""
+    
+    if text_div:
+        msg_html = str(text_div)
+        # Convert <br> tags to newlines manually
+        for br in text_div.find_all("br"):
+            br.replace_with("\n")
+        # Extract text without adding newlines between inline elements like emojis
+        msg_text = text_div.get_text(separator="").strip()
 
-    # Extract media (e.g., photos)
+    # --- FIX 2: Extract both Photos and Videos ---
     media_info = None
+    
+    # Check for Photo first
     photo_wrap = msg.find("a", class_="tgme_widget_message_photo_wrap")
     if photo_wrap:
         style = photo_wrap.get("style", "")
@@ -75,6 +87,13 @@ def extract_message_data(msg, msg_id):
         if start > 4 and end > -1:
             img_url = style[start:end]
             media_info = download_and_hash(img_url)
+            
+    # Check for Video if no photo was found
+    if not media_info:
+        video_tag = msg.find("video", class_="tgme_widget_message_video")
+        if video_tag and video_tag.get("src"):
+            vid_url = video_tag.get("src")
+            media_info = download_and_hash(vid_url)
 
     return {
         "message_id": msg_id,
