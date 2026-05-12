@@ -1,9 +1,8 @@
 name: Telegram Multi-Channel Scraper
 
 on:
-  schedule:
-    - cron: '*/15 * * * *'
-  workflow_dispatch:
+  repository_dispatch:
+    types: [trigger-scrape]
 
 jobs:
   scrape-and-push:
