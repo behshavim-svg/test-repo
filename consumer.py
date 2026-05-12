@@ -10,6 +10,7 @@ import requests
 # ---------------------------------------------------------
 GITHUB_PAT = os.getenv("GITHUB_PAT")
 GITHUB_REPO = os.getenv("GITHUB_REPO")  # Format: username/repo-name
+GITHUB_RUNNER_REPO = os.getenv("GITHUB_RUNNER_REPO")  # Format: username/repo-name
 RC_URL = os.getenv("RC_URL").rstrip('/')
 RC_USER_ID = os.getenv("RC_USER_ID")
 RC_TOKEN = os.getenv("RC_TOKEN")
@@ -28,7 +29,7 @@ WORK_DIR = "/app/temp_workspace/repo"
 def trigger_github_action():
     """Triggers the GitHub Action via Repository Dispatch."""
     print(f"\n[ {time.strftime('%H:%M:%S')} ] Sending Trigger to GitHub Actions...")
-    url = f"https://api.github.com/repos/{GITHUB_REPO}/dispatches"
+    url = f"https://api.github.com/repos/{GITHUB_RUNNER_REPO}/dispatches"
     headers = {
         "Accept": "application/vnd.github.v3+json",
         "Authorization": f"token {GITHUB_PAT}"
