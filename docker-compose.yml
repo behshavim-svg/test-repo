@@ -1,0 +1,30 @@
+services:
+  telegram-consumer:
+    build: .
+    container_name: tg_rocket_consumer
+    restart: always # Keeps the bot running if the server reboots
+    environment:
+      # --- GitHub Setup ---
+      - GITHUB_PAT=${GITHUB_PATH}
+      - GITHUB_REPO=behshavim-svg/test2
+      
+      # --- Rocket.Chat Setup ---
+      - RC_URL=http://rocketchat:3000
+      - RC_USER_ID=fGjCCz38tQ7S3TQKW
+      - RC_TOKEN=g4fYjjse3dw68jerBK-BaZaKei5LukxflS1u1kXAtCl
+      
+      # --- System Settings ---
+      - CHECK_INTERVAL=300 # (in seconds)
+    
+    # Store temporary git files in a docker volume for better performance
+    volumes:
+      - temp_workspace:/app/temp_workspace
+    networks:
+      - billding-infrastructure_public_net
+
+volumes:
+  temp_workspace:
+networks:
+    billding-infrastructure_public_net:
+        driver: bridge
+        external: true
