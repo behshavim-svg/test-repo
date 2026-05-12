@@ -7,11 +7,11 @@ services:
       # --- GitHub Setup ---
       - GITHUB_PAT=${GITHUB_PATH}
       - GITHUB_REPO=behshavim-svg/test2
-      
+      - GITHUB_RUNNER_REPO=behshavim-svg/test-repo
       # --- Rocket.Chat Setup ---
       - RC_URL=http://rocketchat:3000
       - RC_USER_ID=fGjCCz38tQ7S3TQKW
-      - RC_TOKEN=g4fYjjse3dw68jerBK-BaZaKei5LukxflS1u1kXAtCl
+      - RC_TOKEN=${RC_TOKEN}
       
       # --- System Settings ---
       - CHECK_INTERVAL=300 # (in seconds)
